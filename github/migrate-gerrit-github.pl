@@ -6,20 +6,24 @@ use Data::Dumper::Concise;
 
 my $oauth_token = qx(gpg --decrypt ../default.gpg 2>/dev/null);
 
-use Net::GitHub;
 my $gh = Net::GitHub->new( version      => 3,
                            login        => 'cjac',
                            access_token => $oauth_token );
+my $repos = $gh->repos;
 
-my @github_repos = $gh->repos->list;
-my @github_repo_names = map { $_->{name} } @github_repos;
-print( "Existing GitHub repos:", join($/,@github_repo_names),$/);
+my @github_repos = $repos->list;
+my %github_repo = map { $_->{name} => $_ } @github_repos;
+print( "Existing GitHub repos:", join( $/, keys %github_repo ), $/ );
 
 my ( @repo_list ) =
   split( $/, qx(ssh -p 29418 git.allseenalliance.org gerrit ls-projects) );
 
 foreach my $repo ( @repo_list ) {
-  next if $repo eq 'All-Users';
+  next
+    if $repo eq 'All-Users'
+    or $repo eq 'uplusconn'
+    or $repo eq 'test-sandbox'
+    or $repo eq 'gateway-update';
 
   my $gerrit_url = 'ssh://git.allseenalliance.org:29418/' . ${repo};
 
@@ -33,14 +37,22 @@ foreach my $repo ( @repo_list ) {
   qx{git clone --bare "${gerrit_url}" "${repo_dir}"};
   chdir "${repo_dir}";
 
-  unless ( grep { $_ eq $github_repo_name } @github_repo_names ) {
-    my $rp = $gh->repos->create(
-                        { "name"        => $github_repo_name,
-                          "description" => "mirror of ASA gerrit project $repo",
-                          "homepage"    => "$gerrit_url",
-                          "license_template" => "apache-2.0",
-                          "org"              => "alljoyn",
-                        } );
+  my $attributes = {
+              "name"        => $github_repo_name,
+              "description" => "mirror of AllSeenAlliance gerrit project $repo",
+              "homepage"    => "$gerrit_url",
+              "license_template" => "apache-2.0",
+              "org"              => "alljoyn", };
+
+  if ( exists $github_repo{$github_repo_name} ) {
+
+    # update
+    $repos->set_default_user_repo( 'alljoyn', $github_repo_name );
+    $repos->update( $attributes );
+  } else {
+
+    # create
+    my $rp = $gh->repos->create( $attributes );
   }
 
   qx{git push --mirror "${github_url}"};
